@@ -8,9 +8,17 @@ FROM base as build
 RUN apt install -qy git cargo clang cmake
 
 WORKDIR /build
+
+# Deps first, for speed
+COPY Cargo.toml Cargo.lock ./
+
+# This is a dummy build to get the dependencies cached.
+RUN mkdir src && touch src/lib.rs
+RUN cargo build --release
+
 COPY . .
 
-RUN cargo build --release --bin electrs
+RUN cargo build --frozen --release --bin electrs
 
 FROM base as deploy
 
