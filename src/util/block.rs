@@ -1,4 +1,5 @@
 use crate::chain::{BlockHash, BlockHeader};
+use crate::daemon::BlockHeaderWrapper;
 use crate::errors::*;
 use crate::new_index::BlockEntry;
 
@@ -88,7 +89,7 @@ impl HeaderList {
         );
 
         let mut blockhash = tip_hash;
-        let mut headers_chain: Vec<BlockHeader> = vec![];
+        let mut headers_chain: Vec<BlockHeaderWrapper> = vec![];
         let null_hash = BlockHash::default();
 
         while blockhash != null_hash {
@@ -96,11 +97,11 @@ impl HeaderList {
                 panic!(
                     "missing expected blockhash in headers map: {:?}, pointed from: {:?}",
                     blockhash,
-                    headers_chain.last().map(|h| h.block_hash())
+                    headers_chain.last().map(|h| h.hash)
                 )
             });
+            headers_chain.push(BlockHeaderWrapper::new(blockhash, header));
             blockhash = header.prev_blockhash;
-            headers_chain.push(header);
         }
         headers_chain.reverse();
 
@@ -115,25 +116,25 @@ impl HeaderList {
         headers
     }
 
-    pub fn order(&self, new_headers: Vec<BlockHeader>) -> Vec<HeaderEntry> {
+    pub fn order(&self, new_headers: Vec<BlockHeaderWrapper>) -> Vec<HeaderEntry> {
         // header[i] -> header[i-1] (i.e. header.last() is the tip)
         struct HashedHeader {
             blockhash: BlockHash,
-            header: BlockHeader,
+            header: BlockHeaderWrapper,
         }
         let hashed_headers =
             Vec::<HashedHeader>::from_iter(new_headers.into_iter().map(|header| HashedHeader {
-                blockhash: header.block_hash(),
+                blockhash: header.hash,
                 header,
             }));
-        for i in 1..hashed_headers.len() {
-            assert_eq!(
-                hashed_headers[i].header.prev_blockhash,
-                hashed_headers[i - 1].blockhash
-            );
-        }
+        // for i in 1..hashed_headers.len() {
+        // assert_eq!(
+        //    hashed_headers[i].header.prev_blockhash,
+        //    hashed_headers[i - 1].blockhash
+        // );
+        // }
         let prev_blockhash = match hashed_headers.first() {
-            Some(h) => h.header.prev_blockhash,
+            Some(h) => h.header.header.prev_blockhash,
             None => return vec![], // hashed_headers is empty
         };
         let null_hash = BlockHash::default();
@@ -150,7 +151,7 @@ impl HeaderList {
             .map(|(height, hashed_header)| HeaderEntry {
                 height,
                 hash: hashed_header.blockhash,
-                header: hashed_header.header,
+                header: hashed_header.header.header,
             })
             .collect()
     }

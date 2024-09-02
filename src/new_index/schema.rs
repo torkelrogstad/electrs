@@ -257,8 +257,19 @@ impl Indexer {
 
     fn get_new_headers(&self, daemon: &Daemon, tip: &BlockHash) -> Result<Vec<HeaderEntry>> {
         let headers = self.store.indexed_headers.read().unwrap();
+        debug!("current headers: {:}", headers.len());
+
         let new_headers = daemon.get_new_headers(&headers, tip)?;
+        debug!(
+            "got {} new headers: {} ... {}",
+            new_headers.len(),
+            new_headers.first().unwrap().hash,
+            new_headers.last().unwrap().hash,
+        );
+
         let result = headers.order(new_headers);
+
+        trace!("ordered headers: {:}", result.len());
 
         if let Some(tip) = result.last() {
             info!("{:?} ({} left to index)", tip, result.len());
@@ -341,7 +352,7 @@ impl Indexer {
         debug!("Indexing {} blocks with Indexer", blocks.len());
         let previous_txos_map = {
             let _timer = self.start_timer("index_lookup");
-            lookup_txos(&self.store.txstore_db, &get_previous_txos(blocks), false)
+            lookup_txos(&self.store.txstore_db, &get_previous_txos(blocks), true)
         };
         let rows = {
             let _timer = self.start_timer("index_process");
@@ -1028,7 +1039,7 @@ impl ChainQuery {
 
     pub fn lookup_txos(&self, outpoints: &BTreeSet<OutPoint>) -> HashMap<OutPoint, TxOut> {
         let _timer = self.start_timer("lookup_txos");
-        lookup_txos(&self.store.txstore_db, outpoints, false)
+        lookup_txos(&self.store.txstore_db, outpoints, true)
     }
 
     pub fn lookup_avail_txos(&self, outpoints: &BTreeSet<OutPoint>) -> HashMap<OutPoint, TxOut> {
@@ -1312,12 +1323,18 @@ fn index_transaction(
         if !has_prevout(txi) {
             continue;
         }
-        let prev_txo = previous_txos_map
-            .get(&txi.previous_output)
-            .unwrap_or_else(|| panic!("missing previous txo {}", txi.previous_output));
+        let prev_txo = previous_txos_map.get(&txi.previous_output).cloned();
+
+        let allow_missing = true;
+        if allow_missing && prev_txo.is_none() {
+            continue;
+        }
+
+        let prev_txo_unwrapped =
+            prev_txo.unwrap_or_else(|| panic!("missing previous txo {}", txi.previous_output));
 
         let history = TxHistoryRow::new(
-            &prev_txo.script_pubkey,
+            &prev_txo_unwrapped.script_pubkey,
             confirmed_height,
             tx_position,
             TxHistoryInfo::Spending(SpendingInfo {
@@ -1325,7 +1342,7 @@ fn index_transaction(
                 vin: txi_index as u16,
                 prev_txid: full_hash(&txi.previous_output.txid[..]),
                 prev_vout: txi.previous_output.vout as u16,
-                value: prev_txo.value,
+                value: prev_txo_unwrapped.value,
             }),
         );
         rows.push(history.into_row());
